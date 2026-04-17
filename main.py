@@ -1,5 +1,5 @@
 import os
-# main.py — Улучшенная версия с обучением и быстрым поиском
+# main.py — Улучшенная версия с обучением, быстрым поиском и spell-check
 from kivy.app import App
 from kivy.uix.label import Label
 from kivy.uix.button import Button
@@ -25,21 +25,20 @@ from core.viewer import show_page
 
 # ─────────── Цветовая схема ───────────
 COLORS = {
-    'bg':        (0.08, 0.09, 0.12, 1),    # Тёмный фон
-    'panel':     (0.12, 0.14, 0.18, 1),    # Панель
-    'accent':    (0.18, 0.52, 0.95, 1),    # Синий акцент
-    'accent2':   (0.10, 0.72, 0.61, 1),    # Зелёный (обученные результаты)
-    'text':      (0.92, 0.93, 0.95, 1),    # Основной текст
-    'subtext':   (0.55, 0.60, 0.68, 1),    # Вторичный текст
-    'hover':     (0.20, 0.23, 0.30, 1),    # Hover
-    'border':    (0.22, 0.26, 0.34, 1),    # Граница
-    'highlight': (0.95, 0.75, 0.18, 1),    # Жёлтый для совпадений
-    'danger':    (0.90, 0.32, 0.32, 1),    # Красный
+    'bg':        (0.08, 0.09, 0.12, 1),
+    'panel':     (0.12, 0.14, 0.18, 1),
+    'accent':    (0.18, 0.52, 0.95, 1),
+    'accent2':   (0.10, 0.72, 0.61, 1),
+    'text':      (0.92, 0.93, 0.95, 1),
+    'subtext':   (0.55, 0.60, 0.68, 1),
+    'hover':     (0.20, 0.23, 0.30, 1),
+    'border':    (0.22, 0.26, 0.34, 1),
+    'highlight': (0.95, 0.75, 0.18, 1),
+    'danger':    (0.90, 0.32, 0.32, 1),
 }
 
 
 class StatusBar(BoxLayout):
-    """Статусная строка внизу"""
     def __init__(self, **kwargs):
         super().__init__(orientation='horizontal', size_hint_y=None,
                         height=dp(28), padding=[dp(10), 0], **kwargs)
@@ -77,7 +76,6 @@ class StatusBar(BoxLayout):
 
 
 class SearchInput(BoxLayout):
-    """Поле поиска с кнопкой"""
     def __init__(self, on_search, **kwargs):
         super().__init__(orientation='horizontal', size_hint_y=None,
                         height=dp(50), spacing=dp(8), **kwargs)
@@ -124,10 +122,13 @@ class SearchInput(BoxLayout):
         self.search_btn.disabled = loading
         self.search_btn.text = "..." if loading else "Найти"
 
+    def set_text(self, text):
+        self.text_input.text = text
+
 
 class ResultCard(BoxLayout):
-    """Карточка результата поиска"""
-    def __init__(self, filename, page_num, snippet, is_learned=False, on_press_cb=None, **kwargs):
+    def __init__(self, filename, page_num, snippet, is_learned=False,
+                 on_press_cb=None, **kwargs):
         super().__init__(
             orientation='horizontal',
             size_hint_y=None,
@@ -138,7 +139,6 @@ class ResultCard(BoxLayout):
         )
         self._cb = on_press_cb
 
-        # Цветная полоска слева
         border_col = COLORS['accent2'] if is_learned else COLORS['border']
         stripe = Widget(size_hint_x=None, width=dp(4))
         with stripe.canvas:
@@ -148,14 +148,12 @@ class ResultCard(BoxLayout):
         stripe.bind(size=lambda w, v: setattr(w._rect, 'size', v))
         self.add_widget(stripe)
 
-        # Фон всей карточки
         with self.canvas.before:
             Color(*COLORS['panel'])
             self._bg = Rectangle(pos=self.pos, size=self.size)
         self.bind(pos=lambda w, v: setattr(w._bg, 'pos', v))
         self.bind(size=lambda w, v: setattr(w._bg, 'size', v))
 
-        # Текстовая часть
         text_area = BoxLayout(
             orientation='vertical',
             padding=[dp(10), dp(8), dp(8), dp(8)],
@@ -194,7 +192,6 @@ class ResultCard(BoxLayout):
         text_area.add_widget(snip)
         self.add_widget(text_area)
 
-        # Кнопка открыть
         open_btn = Button(
             text='▶',
             size_hint=(None, 1),
@@ -214,8 +211,100 @@ class ResultCard(BoxLayout):
             return True
         return super().on_touch_up(touch)
 
+
+class AbbreviationPopup(Popup):
+    """
+    Диалог подтверждения аббревиатуры.
+    Показывается когда пользователь пишет, например, "би-2а" → предлагаем "БИ-2А".
+    """
+    def __init__(self, suggestions, original_query,
+                 on_confirm, on_decline, **kwargs):
+        content = BoxLayout(orientation='vertical',
+                           spacing=dp(10), padding=dp(16))
+        super().__init__(
+            title="✏️ Уточнение запроса",
+            content=content,
+            size_hint=(0.55, None),
+            height=dp(220),
+            **kwargs
+        )
+        self.on_confirm_cb = on_confirm
+        self.on_decline_cb = on_decline
+
+        # Текст подсказки
+        msgs = "\n".join(f"  {s['message']}" for s in suggestions)
+        info = Label(
+            text=f"Запрос: «{original_query}»\n\n{msgs}",
+            color=COLORS['text'],
+            font_size=dp(13),
+            halign='center',
+            valign='middle',
+        )
+        info.bind(size=lambda w, v: setattr(w, 'text_size', v))
+        content.add_widget(info)
+
+        # Кнопки
+        btn_row = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(10))
+
+        yes_btn = Button(
+            text="✅ Да, исправить",
+            background_color=COLORS['accent'],
+            color=COLORS['text'],
+            font_size=dp(13),
+        )
+        yes_btn.bind(on_press=self._on_yes)
+
+        no_btn = Button(
+            text="❌ Нет, оставить",
+            background_color=COLORS['danger'],
+            color=COLORS['text'],
+            font_size=dp(13),
+        )
+        no_btn.bind(on_press=self._on_no)
+
+        btn_row.add_widget(yes_btn)
+        btn_row.add_widget(no_btn)
+        content.add_widget(btn_row)
+
+    def _on_yes(self, instance):
+        self.dismiss()
+        self.on_confirm_cb()
+
+    def _on_no(self, instance):
+        self.dismiss()
+        self.on_decline_cb()
+
+
+class SpellFixBar(BoxLayout):
+    """
+    Полоска-уведомление об авто-исправленных опечатках (под строкой поиска).
+    """
+    def __init__(self, fixes, **kwargs):
+        super().__init__(
+            orientation='horizontal',
+            size_hint_y=None,
+            height=dp(22),
+            padding=[dp(10), 0],
+            **kwargs
+        )
+        with self.canvas.before:
+            Color(0.12, 0.22, 0.12, 1)
+            self.bg = Rectangle(pos=self.pos, size=self.size)
+        self.bind(pos=lambda w, v: setattr(w.bg, 'pos', v))
+        self.bind(size=lambda w, v: setattr(w.bg, 'size', v))
+
+        msg = "  |  ".join(s['message'] for s in fixes)
+        lbl = Label(
+            text=f"✍️ {msg}",
+            color=COLORS['accent2'],
+            font_size=dp(10),
+            halign='left',
+        )
+        lbl.bind(size=lambda w, v: setattr(w, 'text_size', v))
+        self.add_widget(lbl)
+
+
 class HistoryPopup(Popup):
-    """Попап с историей поисков"""
     def __init__(self, history, on_select, **kwargs):
         content = BoxLayout(orientation='vertical', spacing=dp(6), padding=dp(10))
         super().__init__(
@@ -229,7 +318,13 @@ class HistoryPopup(Popup):
         grid = GridLayout(cols=1, spacing=dp(4), size_hint_y=None)
         grid.bind(minimum_height=grid.setter('height'))
 
-        for query, last_time, count in history[:20]:
+        # history: List[Tuple[str, str, int]]  — (query, timestamp, count)
+        for item in history[:20]:
+            if isinstance(item, (tuple, list)) and len(item) >= 3:
+                query, _, count = item[0], item[1], item[2]
+            else:
+                query, count = str(item), 1
+
             btn = Button(
                 text=f"{query}  ({count}×)",
                 size_hint_y=None,
@@ -258,25 +353,23 @@ class PDFSearchApp(App):
     title = "PDF Search Pro"
 
     def build(self):
-        # Папка pdfs/ рядом с main.py (работает при любом рабочем каталоге)
         self.folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pdfs")
         if not os.path.exists(self.folder):
             os.makedirs(self.folder)
             print(f"📁 Создана папка: {self.folder}")
         print(f"📁 Папка PDF: {self.folder}")
-        self.current_query = ""
-        self.search_results = []  # Сохраняем для записи кликов
 
-        # Настройка окна
-        Window.clearcolor = COLORS['bg']
-        Window.minimum_width = 800
+        self.current_query  = ""
+        self.search_results = []
+        self._spell_fix_bar = None    # текущая полоска spell-fix
+
+        Window.clearcolor   = COLORS['bg']
+        Window.minimum_width  = 800
         Window.minimum_height = 600
         Window.size = (1000, 700)
 
-        # Инициализация поиска
         self.searcher = HybridSearch()
 
-        # Главный layout
         root = BoxLayout(orientation='vertical', spacing=dp(6), padding=dp(10))
 
         # ── Верхняя панель ──
@@ -342,7 +435,7 @@ class PDFSearchApp(App):
         # ── Поле поиска ──
         self.search_input = SearchInput(on_search=self.on_search)
 
-        # ── Прогресс поиска ──
+        # ── Прогресс ──
         self.progress = ProgressBar(
             max=100, value=0,
             size_hint_y=None, height=dp(4)
@@ -373,7 +466,8 @@ class PDFSearchApp(App):
         # ── Статусная строка ──
         self.status_bar = StatusBar()
 
-        # Собираем layout
+        # Основной layout
+        self._root_layout = root
         root.add_widget(top_panel)
         root.add_widget(self.search_input)
         root.add_widget(self.progress)
@@ -381,27 +475,83 @@ class PDFSearchApp(App):
         root.add_widget(scroll)
         root.add_widget(self.status_bar)
 
-        # Запускаем фоновое индексирование
+        # Фоновое индексирование
         self._start_indexing()
 
         return root
 
     def _start_indexing(self):
-        """Запускаем индексирование при старте (в фоне)"""
         def on_status(text):
             Clock.schedule_once(lambda dt: setattr(self.index_status, 'text', text))
 
-        def on_progress(pct):
-            pass  # Индекс прогресс не блокирует UI
-
         self.searcher.ensure_indexed(
             self.folder,
-            progress_cb=on_progress,
+            progress_cb=lambda p: None,
             status_cb=on_status
         )
 
-    def on_search(self, query):
-        """Запускаем поиск"""
+    # ─────────────────── Поиск (главная логика) ───────────────────
+
+    def on_search(self, query: str):
+        """
+        Точка входа из UI. Сначала проверяем запрос на аббревиатуры/опечатки,
+        затем запускаем поиск.
+        """
+        query = query.strip()
+        if not query:
+            return
+
+        # Убираем старую полоску spell-fix
+        self._remove_spell_bar()
+
+        info = self.searcher.check_query(query)
+
+        if info['has_abbreviations']:
+            # Показываем диалог подтверждения аббревиатуры
+            def on_confirm():
+                # Применяем аббревиатуры
+                corrected = self.searcher.spell_checker.apply_abbreviations(
+                    info['auto_corrected'], info['abbreviation_suggestions']
+                )
+                self.search_input.set_text(corrected)
+                self._show_spell_fixes(info['spell_fixes'])
+                self._run_search(corrected)
+
+            def on_decline():
+                # Используем без аббревиатурных замен (опечатки всё равно исправлены)
+                self._show_spell_fixes(info['spell_fixes'])
+                self._run_search(info['auto_corrected'])
+
+            popup = AbbreviationPopup(
+                suggestions=info['abbreviation_suggestions'],
+                original_query=query,
+                on_confirm=on_confirm,
+                on_decline=on_decline,
+            )
+            popup.open()
+        else:
+            # Нет аббревиатур — сразу ищем (опечатки уже исправлены авто)
+            if info['spell_fixes']:
+                self._show_spell_fixes(info['spell_fixes'])
+            self._run_search(info['auto_corrected'])
+
+    def _show_spell_fixes(self, fixes):
+        """Показывает полоску с авто-исправлениями опечаток."""
+        if not fixes:
+            return
+        bar = SpellFixBar(fixes, size_hint_y=None, height=dp(22))
+        # Вставляем после search_input (индекс 1)
+        self._root_layout.add_widget(bar, index=len(self._root_layout.children) - 2)
+        self._spell_fix_bar = bar
+
+    def _remove_spell_bar(self):
+        """Убирает полоску spell-fix если есть."""
+        if self._spell_fix_bar and self._spell_fix_bar.parent:
+            self._root_layout.remove_widget(self._spell_fix_bar)
+        self._spell_fix_bar = None
+
+    def _run_search(self, query: str):
+        """Запускает фактический поиск в фоновом потоке."""
         self.current_query = query
         self.result_layout.clear_widgets()
         self.progress.value = 0
@@ -412,9 +562,9 @@ class PDFSearchApp(App):
         def update_progress(value):
             Clock.schedule_once(lambda dt: setattr(self.progress, 'value', value))
 
-        def run_search():
+        def run():
             results = self.searcher.search(self.folder, query, update_progress)
-            self.search_results = results  # Сохраняем для обучения
+            self.search_results = results
 
             def render(dt):
                 self.result_layout.clear_widgets()
@@ -423,7 +573,7 @@ class PDFSearchApp(App):
                     self.result_count.text = f"Найдено: {len(results)} результатов"
 
                     for idx, (filepath, page_num, text) in enumerate(results[:50]):
-                        filename = os.path.basename(filepath)
+                        filename   = os.path.basename(filepath)
                         is_learned = text.startswith("⭐")
 
                         cb = partial(self.open_page, filepath, page_num, query, idx)
@@ -436,11 +586,7 @@ class PDFSearchApp(App):
                         )
                         self.result_layout.add_widget(card)
 
-                    self.status_bar.set_status(
-                        f"✅ Найдено {len(results)} результатов"
-                    )
-
-                    # Обновляем статистику
+                    self.status_bar.set_status(f"✅ Найдено {len(results)} результатов")
                     stats = self.searcher.get_stats()
                     self.status_bar.set_stats(
                         f"📄 {stats['files']} файлов • 🎓 {stats['clicks']} кликов"
@@ -461,58 +607,59 @@ class PDFSearchApp(App):
 
                 self.progress.value = 100
                 self.search_input.set_loading(False)
-
+            print(f"DEBUG: render called with {len(results) if results else 0} results")  # ← добавить
+            self.result_layout.clear_widgets()
             Clock.schedule_once(render, 0)
 
-        threading.Thread(target=run_search, daemon=True).start()
+        threading.Thread(target=run, daemon=True).start()
+
+
+    # ─────────────────── Открытие страницы ───────────────────
 
     def open_page(self, filepath, page_num, query, rank, instance):
-        """Открываем PDF и записываем клик для обучения"""
         try:
-            # 🎓 Обучение: записываем клик
             self.searcher.record_click(query, filepath, page_num, rank)
-
             show_page(filepath, page_num)
             fname = os.path.basename(filepath)
             self.status_bar.set_status(f"📖 Открываю {fname}, стр. {page_num + 1}")
             print(f"📖 Открываю: {fname}, страница {page_num + 1}")
-
         except Exception as e:
             self.status_bar.set_status(f"❌ Ошибка: {e}")
             print(f"Ошибка открытия: {e}")
 
+    # ─────────────────── Переиндексирование ───────────────────
+
     def force_reindex(self, instance):
-        """Принудительно переиндексировать все файлы"""
-        import sqlite3
         try:
-            # Удаляем старый индекс
             db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pdf_index.db")
             if os.path.exists(db_path):
                 os.remove(db_path)
-                self.status_bar.set_status("🗑️ Старый индекс удалён, начинаю переиндексацию...")
-            # Пересоздаём searcher
+            json_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pdf_index.json")
+            if os.path.exists(json_path):
+                os.remove(json_path)
+            self.status_bar.set_status("🗑️ Старый индекс удалён, переиндексирую...")
             from core.hybrid_search import HybridSearch
             self.searcher = HybridSearch()
             self._start_indexing()
         except Exception as e:
             self.status_bar.set_status(f"❌ Ошибка: {e}")
 
+    # ─────────────────── История / Статистика ───────────────────
+
     def show_history(self, instance):
-        """Показываем историю поисков"""
         history = self.searcher.get_search_history()
         if not history:
             self.status_bar.set_status("История поисков пуста")
             return
 
         def on_select(query):
-            self.search_input.text_input.text = query
+            self.search_input.set_text(query)
             self.on_search(query)
 
         popup = HistoryPopup(history, on_select)
         popup.open()
 
     def show_stats(self, instance):
-        """Показываем статистику"""
         stats = self.searcher.get_stats()
 
         content = BoxLayout(orientation='vertical', padding=dp(20), spacing=dp(10))
@@ -523,11 +670,11 @@ class PDFSearchApp(App):
         )
 
         items = [
-            ("📄 Файлов в индексе", stats.get('files', 0)),
+            ("📄 Файлов в индексе",       stats.get('files', 0)),
             ("📃 Страниц проиндексировано", f"{stats.get('pages', 0):,}"),
-            ("🔍 Всего поисков", stats.get('searches', 0)),
-            ("👆 Кликов (обучение)", stats.get('clicks', 0)),
-            ("🧠 Паттернов запомнено", stats.get('patterns', 0)),
+            ("🔍 Всего поисков",           stats.get('searches', 0)),
+            ("👆 Кликов (обучение)",       stats.get('clicks', 0)),
+            ("🧠 Паттернов запомнено",     stats.get('patterns', 0)),
         ]
 
         for label, value in items:
