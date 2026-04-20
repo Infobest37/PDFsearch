@@ -1,12 +1,18 @@
-# Исключаем большие и ненужные файлы
-*.zip
-*.exe
-*.pkg
-pdfs.zip
+# Конфигурация папки
+pdf_folder_config.json
 
-# Стандартные папки, которые лучше не хранить в Git
-.idea/
-build/
-dist/
+# Остальное как было
+.venv/
 __pycache__/
 *.pyc
+*.db
+*.json
+!manual_abbreviations.json
+pdfs/
+build/
+dist/
+*.spec
+check_index.py
+scan_abbreviations.py
+search_history.json
+preview.png
